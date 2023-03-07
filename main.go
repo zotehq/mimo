@@ -17,7 +17,6 @@ import (
 
 func main() {
 	mux := http.NewServeMux()
-
 	cleanupInterval := time.Minute * 30
 	cleanupTicker := time.NewTicker(cleanupInterval)
 
@@ -39,9 +38,7 @@ func main() {
 	}()
 
 	log.Println("Listening on PORT 8080")
-
 	err := server.ListenAndServe()
-
 	if err != nil {
 		fmt.Println(err)
 	}
