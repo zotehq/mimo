@@ -18,21 +18,21 @@ import (
 )
 
 type imageCache struct {
-	cache map[string][]byte
+	cache map[string]io.Reader
 	mu    sync.RWMutex
 }
 
-func (c *imageCache) Get(key string) ([]byte, bool) {
+func (c *imageCache) Get(key string) (io.Reader, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	data, ok := c.cache[key]
-	return data, ok
+	reader, ok := c.cache[key]
+	return reader, ok
 }
 
-func (c *imageCache) Set(key string, data []byte) {
+func (c *imageCache) Set(key string, reader io.Reader) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.cache[key] = data
+	c.cache[key] = reader
 }
 
 func ServeWebPImage(w http.ResponseWriter, r *http.Request) {
@@ -51,26 +51,32 @@ func ServeWebPImage(w http.ResponseWriter, r *http.Request) {
 	cacheStatus := "MISS"
 	cache, ok := r.Context().Value("cache").(*imageCache)
 	if ok {
-		if data, ok := cache.Get(cacheKey); ok {
+		if reader, ok := cache.Get(cacheKey); ok {
 			cacheStatus = "HIT"
 			w.Header().Set("Cache-Status", cacheStatus)
 			w.Header().Set("Response-Time", fmt.Sprint(time.Since(start).Milliseconds()))
 			w.Header().Set("Content-Type", "image/webp")
-			w.Write(data)
+			_, err := io.Copy(w, reader)
+			if err != nil {
+				log.Printf("Failed to write response: %s", err.Error())
+			}
 			return
 		}
 	}
 
-	webpData, err := os.ReadFile(cachePath)
+	webpFile, err := os.Open(cachePath)
 	if err == nil {
 		cacheStatus = "HIT"
 		if cache != nil {
-			cache.Set(cacheKey, webpData)
+			cache.Set(cacheKey, webpFile)
 		}
 		w.Header().Set("Cache-Status", cacheStatus)
 		w.Header().Set("Response-Time", fmt.Sprint(time.Since(start).Milliseconds()))
 		w.Header().Set("Content-Type", "image/webp")
-		w.Write(webpData)
+		_, err := io.Copy(w, webpFile)
+		if err != nil {
+			log.Printf("Failed to write response: %s", err.Error())
+		}
 		return
 	}
 
@@ -93,23 +99,32 @@ func ServeWebPImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	webpData, err = webp.EncodeRGBA(img, 80)
+	webpFile, err = os.Create(cachePath)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+		log.Printf("Failed to create cache file: %s", err.Error())
+	} else {
+		defer webpFile.Close()
 
-	err = os.WriteFile(cachePath, webpData, 0644)
-	if err != nil {
-		log.Printf("Failed to write cache file: %s", err.Error())
-	}
+		err = webp.Encode(webpFile, img, nil)
+		if err != nil {
+			log.Printf("Failed to encode image to WebP: %s", err.Error())
+		}
 
-	if cache != nil {
-		cache.Set(cacheKey, webpData)
+		if cache != nil {
+			_, err = webpFile.Seek(0, 0)
+			if err != nil {
+				log.Printf("Failed to seek cache file: %s", err.Error())
+			} else {
+				cache.Set(cacheKey, webpFile)
+			}
+		}
 	}
 
 	w.Header().Set("Cache-Status", cacheStatus)
 	w.Header().Set("Response-Time", fmt.Sprint(time.Since(start).Milliseconds()))
 	w.Header().Set("Content-Type", "image/webp")
-	w.Write(webpData)
+	_, err = io.Copy(w, bytes.NewReader(imageData))
+	if err != nil {
+		log.Printf("Failed to write response: %s", err.Error())
+	}
 }
