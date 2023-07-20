@@ -18,7 +18,6 @@ import (
 func main() {
 	r := gin.Default()
 
-	r.Use(middlewares.ResponseTimeMiddleware())
 	r.Use(middlewares.CustomHeaders())
 
 	r.GET("/health", handlers.HealthStats)
