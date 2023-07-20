@@ -22,6 +22,7 @@ func main() {
 
 	r.GET("/health", handlers.HealthStats)
 	r.GET("/image/resize", handlers.ResizeImage)
+	r.GET("/image/webp", handlers.ServeWebP)
 
 	cleanupInterval := time.Minute * 30
 

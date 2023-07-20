@@ -3,6 +3,7 @@ module github.com/aelpxy/krofi
 go 1.20
 
 require (
+	github.com/chai2010/webp v1.1.1
 	github.com/disintegration/imaging v1.6.2
 	github.com/gin-gonic/gin v1.9.1
 )
