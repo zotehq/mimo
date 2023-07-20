@@ -1,130 +1,132 @@
 package handlers
 
 import (
-	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"image"
-	"io"
-	"log"
 	"net/http"
-	"os"
-	"path/filepath"
-	"sync"
+	"strconv"
 	"time"
 
-	"github.com/chai2010/webp"
+	"github.com/disintegration/imaging"
+	"github.com/gin-gonic/gin"
 )
 
-type imageCache struct {
-	cache map[string]io.Reader
-	mu    sync.RWMutex
-}
-
-func (c *imageCache) Get(key string) (io.Reader, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	reader, ok := c.cache[key]
-	return reader, ok
-}
-
-func (c *imageCache) Set(key string, reader io.Reader) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.cache[key] = reader
-}
-
-func ServeWebPImage(w http.ResponseWriter, r *http.Request) {
+func ResizeImage(c *gin.Context) {
 	start := time.Now()
 
-	queryPath := r.URL.Query().Get("path")
-	if queryPath == "" {
-		http.Error(w, "Missing 'path' query parameter", http.StatusBadRequest)
+	imageURL := c.Query("url")
+
+	if imageURL == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing 'url' query parameter"})
 		return
 	}
 
-	hash := sha256.Sum256([]byte(queryPath))
-	cacheKey := hex.EncodeToString(hash[:])
-	cachePath := filepath.Join(os.TempDir(), cacheKey+".webp")
-
-	cacheStatus := "MISS"
-	cache, ok := r.Context().Value("cache").(*imageCache)
-	if ok {
-		if reader, ok := cache.Get(cacheKey); ok {
-			cacheStatus = "HIT"
-			w.Header().Set("Cache-Status", cacheStatus)
-			w.Header().Set("Response-Time", fmt.Sprint(time.Since(start).Milliseconds()))
-			w.Header().Set("Content-Type", "image/webp")
-			_, err := io.Copy(w, reader)
-			if err != nil {
-				log.Printf("Failed to write response: %s", err.Error())
-			}
-			return
-		}
-	}
-
-	webpFile, err := os.Open(cachePath)
-	if err == nil {
-		cacheStatus = "HIT"
-		if cache != nil {
-			cache.Set(cacheKey, webpFile)
-		}
-		w.Header().Set("Cache-Status", cacheStatus)
-		w.Header().Set("Response-Time", fmt.Sprint(time.Since(start).Milliseconds()))
-		w.Header().Set("Content-Type", "image/webp")
-		_, err := io.Copy(w, webpFile)
-		if err != nil {
-			log.Printf("Failed to write response: %s", err.Error())
-		}
-		return
-	}
-
-	resp, err := http.Get(queryPath)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	resp, err := http.Get(imageURL)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch the image"})
 		return
 	}
 	defer resp.Body.Close()
 
-	imageData, err := io.ReadAll(resp.Body)
+	img, _, err := image.Decode(resp.Body)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid image format"})
 		return
 	}
 
-	img, _, err := image.Decode(bytes.NewReader(imageData))
+	widthStr := c.DefaultQuery("width", "0")
+	heightStr := c.DefaultQuery("height", "0")
+	blurStr := c.DefaultQuery("blur", "0")
+	sharpenStr := c.DefaultQuery("sharpen", "0")
+	gammaStr := c.DefaultQuery("gamma", "1.0")
+	contrastStr := c.DefaultQuery("contrast", "1.0")
+	brightnessStr := c.DefaultQuery("brightness", "0")
+	saturationStr := c.DefaultQuery("saturation", "1.0")
+
+	width, err := strconv.Atoi(widthStr)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid width parameter"})
 		return
 	}
 
-	webpFile, err = os.Create(cachePath)
+	height, err := strconv.Atoi(heightStr)
 	if err != nil {
-		log.Printf("Failed to create cache file: %s", err.Error())
-	} else {
-		defer webpFile.Close()
-
-		err = webp.Encode(webpFile, img, nil)
-		if err != nil {
-			log.Printf("Failed to encode image to WebP: %s", err.Error())
-		}
-
-		if cache != nil {
-			_, err = webpFile.Seek(0, 0)
-			if err != nil {
-				log.Printf("Failed to seek cache file: %s", err.Error())
-			} else {
-				cache.Set(cacheKey, webpFile)
-			}
-		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid height parameter"})
+		return
 	}
 
-	w.Header().Set("Cache-Status", cacheStatus)
-	w.Header().Set("Response-Time", fmt.Sprint(time.Since(start).Milliseconds()))
-	w.Header().Set("Content-Type", "image/webp")
-	_, err = io.Copy(w, bytes.NewReader(imageData))
+	blur, err := strconv.Atoi(blurStr)
 	if err != nil {
-		log.Printf("Failed to write response: %s", err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid blur parameter"})
+		return
+	}
+
+	sharpen, err := strconv.Atoi(sharpenStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid sharpen parameter"})
+		return
+	}
+
+	gamma, err := strconv.ParseFloat(gammaStr, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid gamma parameter"})
+		return
+	}
+
+	contrast, err := strconv.ParseFloat(contrastStr, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid contrast parameter"})
+		return
+	}
+
+	brightness, err := strconv.Atoi(brightnessStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid brightness parameter"})
+		return
+	}
+
+	saturation, err := strconv.ParseFloat(saturationStr, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid saturation parameter"})
+		return
+	}
+
+	if width > 0 || height > 0 {
+		img = imaging.Resize(img, width, height, imaging.Lanczos)
+	}
+
+	if blur > 0 {
+		img = imaging.Blur(img, float64(blur))
+	}
+
+	if sharpen > 0 {
+		img = imaging.Sharpen(img, float64(sharpen))
+	}
+
+	if gamma != 1.0 {
+		img = imaging.AdjustGamma(img, gamma)
+	}
+
+	if contrast != 1.0 {
+		img = imaging.AdjustContrast(img, contrast)
+	}
+
+	if brightness != 0 {
+		img = imaging.AdjustBrightness(img, float64(brightness))
+	}
+
+	if saturation != 1.0 {
+		img = imaging.AdjustSaturation(img, saturation)
+	}
+
+	c.Header("Content-Type", "image/jpeg")
+	c.Header("Cache-Control", "max-age=3600")
+
+	responseTime := time.Since(start).Milliseconds()
+	c.Writer.Header().Set("X-Response-Time", fmt.Sprintf("%d ms", responseTime))
+
+	if err := imaging.Encode(c.Writer, img, imaging.JPEG); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to encode the image"})
+		return
 	}
 }
