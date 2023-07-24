@@ -24,7 +24,7 @@ func main() {
 	r.GET("/image/resize", handlers.ResizeImage)
 	r.GET("/image/webp", handlers.ServeWebP)
 
-	cleanupInterval := time.Minute * 30
+	cleanupInterval := time.Second * 3600
 
 	go func() {
 		for range time.Tick(cleanupInterval) {
